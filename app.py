@@ -1,13 +1,16 @@
 from flask import Flask, render_template, jsonify, request
 import random
 import datetime
+import threading
+import time
 import inverted_sigil_recycler
 import frequency_tuner
 import chimera_syntax_engine
+import db
 
 app = Flask(__name__)
 
-# Simulated Database
+# Simulated Database (InMemory state for nodes)
 nodes = [
     {"id": "NODE_ALPHA_01", "status": "ONLINE", "load": 42, "code": "8F2-X91"},
     {"id": "NODE_BETA_04", "status": "UNSTABLE", "load": 98, "code": "7B1-Z00"},
@@ -22,6 +25,45 @@ telemetry = {
     "gnosis_integrity": 98.4,
     "entropic_fuel": 42.1,
 }
+
+def background_monitor():
+    """
+    Background thread to monitor system status and log telemetry.
+    """
+    last_log_time = 0
+    print("Background monitor started.")
+
+    while True:
+        current_time = time.time()
+
+        # 1. Logic Synchronization: Monitor Node_Beta_04
+        # "Map the 'Node_Beta_04' status... trigger consume_failure... whenever a system timeout or error occurs."
+        # We assume 'OFFLINE' or 'UNSTABLE' with high load might count as error/timeout context.
+        # Let's be specific: If Node_Beta_04 is OFFLINE, we trigger failure consumption.
+
+        beta_node = next((n for n in nodes if n["id"] == "NODE_BETA_04"), None)
+        if beta_node:
+            if beta_node["status"] == "OFFLINE":
+                inverted_sigil_recycler.consume_failure("Node_Beta_04 OFFLINE")
+                # Reset status to UNSTABLE after consuming failure to avoid infinite loop of consumption in this simulation
+                # or we just let it consume repeatedly. Let's consume then reset to give it a chance to "recover" or just wait.
+                # For simulation, we'll leave it, but maybe limit frequency?
+                # Actually, `consume_failure` is just a logic trigger.
+                pass
+            elif beta_node["status"] == "UNSTABLE" and beta_node["load"] > 99:
+                 inverted_sigil_recycler.consume_failure("Node_Beta_04 CRITICAL LOAD")
+
+        # 2. Data Persistence: Log telemetry every 60 seconds
+        if current_time - last_log_time >= 60:
+            # Get latest values
+            gnosis = telemetry.get("gnosis_integrity", 0)
+            fuel = inverted_sigil_recycler.get_entropic_fuel_level() # Get latest from module
+
+            db.log_telemetry(gnosis, fuel)
+            print(f"Telemetry logged: Gnosis={gnosis}, Fuel={fuel}")
+            last_log_time = current_time
+
+        time.sleep(1) # Check loop frequency
 
 @app.route('/')
 def index():
@@ -43,6 +85,11 @@ def get_nodes():
              if random.random() < 0.1:
                  node["status"] = "ONLINE"
                  node["load"] = random.randint(10, 30)
+        elif node["status"] == "OFFLINE":
+             # Random chance to reboot
+             if random.random() < 0.2:
+                 node["status"] = "UNSTABLE"
+                 node["load"] = 80
 
     return jsonify(nodes)
 
@@ -69,9 +116,6 @@ def execute_command():
     command = data.get('command', '').strip()
 
     # Side effects handling (state changes)
-    # Ideally, the engine might return a structured object indicating actions,
-    # but for this requirement, we'll keep the side effects here or triggered by the command name.
-
     if command == 'purge':
         # Apply purge logic
         for node in nodes:
@@ -105,6 +149,13 @@ def connect_node():
     new_id = f"NODE_OMEGA_{random.randint(10,99)}"
     nodes.append({"id": new_id, "status": "ONLINE", "load": 5, "code": f"{random.randint(100,999)}-X{random.randint(10,99)}"})
     return jsonify({"status": "success", "message": f"{new_id} connected"})
+
+# Initialize DB
+db.init_db()
+
+# Start background thread
+monitor_thread = threading.Thread(target=background_monitor, daemon=True)
+monitor_thread.start()
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
