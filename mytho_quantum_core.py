@@ -7,6 +7,7 @@ import logging
 from typing import Any, Dict
 from inverted_sigil_recycler import recycler
 
+# Logging configuration
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
 

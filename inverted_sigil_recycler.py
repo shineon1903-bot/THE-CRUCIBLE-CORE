@@ -33,6 +33,10 @@ class EntropicRecycler:
         with self._lock:
             return float(self.current_fuel)
 
+    def restore_fuel(self, fuel_level: float):
+        with self._lock:
+            self.current_fuel = max(0.0, min(100.0, float(fuel_level)))
+
     # Backwards-compatible convenience methods used by older PR code
     def recycle_sigil(self) -> str:
         return self.consume_failure("Manual_Recycle") and "SIGIL RECYCLED."
