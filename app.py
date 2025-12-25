@@ -8,10 +8,8 @@ import threading
 import time
 import random
 import os
-import time
-import db
 
-app = Flask(__name__, static_folder='.', template_folder='.')
+app = Flask(__name__, static_folder='.', template_folder='templates')
 
 # Create tuner instance globally so routes can access it
 tuner = FrequencyTuner(target_hz=712.8, interval_seconds=60)
@@ -69,8 +67,9 @@ def background_monitor():
 
         time.sleep(1) # Check loop frequency
 
-# Start background thread
+# Initialize DB
 db.init_db()
+# Start background thread
 monitor_thread = threading.Thread(target=background_monitor, daemon=True)
 monitor_thread.start()
 
@@ -79,7 +78,7 @@ monitor_thread.start()
 
 @app.route('/')
 def index():
-    return send_from_directory('.', 'index.html')
+    return render_template('index.html')
 
 # -- Dashboard API Endpoints --
 
