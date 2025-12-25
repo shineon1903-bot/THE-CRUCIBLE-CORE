@@ -8,10 +8,12 @@ import threading
 import time
 import random
 import os
+import time
+import db
 
 app = Flask(__name__, static_folder='.', template_folder='.')
 
-# Start the frequency tuner in a background thread
+# Create tuner instance globally so routes can access it
 tuner = FrequencyTuner(target_hz=712.8, interval_seconds=60)
 try:
     tuner.start()
