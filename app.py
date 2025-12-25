@@ -1,76 +1,171 @@
 # Minimal Flask app to expose the three scripts to the UI.
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, render_template
 from inverted_sigil_recycler import recycler
 from frequency_tuner import FrequencyTuner
-from chimera_syntax_engine import execute_chimera_command
-from mytho_quantum_core import TheWatchman
+import chimera_syntax_engine
+import db
 import threading
+import time
+import random
 import os
 import time
 import db
 
-app = Flask(__name__, static_folder='.')
+app = Flask(__name__, static_folder='.', template_folder='.')
 
 # Create tuner instance globally so routes can access it
 tuner = FrequencyTuner(target_hz=712.8, interval_seconds=60)
+try:
+    tuner.start()
+except Exception:
+    pass
 
-def start_background_tasks():
-    # Initialize Database
-    db.init_db()
+# --- SIMULATION STATE (From Dashboard Branch) ---
+nodes = [
+    {"id": "NODE_ALPHA_01", "status": "ONLINE", "load": 42, "code": "8F2-X91"},
+    {"id": "NODE_BETA_04", "status": "UNSTABLE", "load": 98, "code": "7B1-Z00"},
+    {"id": "NODE_GAMMA_09", "status": "IDLE", "load": 0, "code": "3C4-Y22"},
+    {"id": "NODE_DELTA_12", "status": "ONLINE", "load": 67, "code": "9X9-A11"},
+    {"id": "NODE_EPSILON_88", "status": "ONLINE", "load": 33, "code": "1L1-M33"},
+]
 
-    # Restore Fuel from Persistence
-    last_telemetry = db.get_latest_telemetry()
-    if last_telemetry:
-        recycler.restore_fuel(last_telemetry['entropic_fuel'])
-        print(f"Restored fuel level to {last_telemetry['entropic_fuel']}% from database.")
+telemetry = {
+    "target_resonance": 712.8,
+    "system_integrity": 98.4,
+    "gnosis_integrity": 98.4,
+    "entropic_fuel": 42.1,
+}
 
-    # Start the frequency tuner
-    try:
-        tuner.start()
-    except Exception:
-        pass
+def background_monitor():
+    """
+    Background thread to monitor system status and log telemetry.
+    """
+    last_log_time = 0
+    print("Background monitor started.")
 
-    # Start TheWatchman (Node_Beta_04)
-    watchman = TheWatchman(name="Node_Beta_04")
-    # We assume a dummy error source for simulation
-    def simulated_error_source(uptime):
-        import random
-        if random.random() < 0.1:
-            return int(uptime % 10)
-        return 0
+    while True:
+        current_time = time.time()
 
-    watchman.start_periodic_monitor(check_interval=45.0, error_source_callable=simulated_error_source)
+        # 1. Logic Synchronization: Monitor Node_Beta_04
+        beta_node = next((n for n in nodes if n["id"] == "NODE_BETA_04"), None)
+        if beta_node:
+            if beta_node["status"] == "OFFLINE":
+                # Use the module to consume failure
+                recycler.consume_failure("Node_Beta_04 OFFLINE")
+            elif beta_node["status"] == "UNSTABLE" and beta_node["load"] > 99:
+                 recycler.consume_failure("Node_Beta_04 CRITICAL LOAD")
 
-    # Background thread for Telemetry Logging (Persistence)
-    def telemetry_logger_loop():
-        while True:
-            try:
-                current_fuel = recycler.current_fuel
-                # Use current resonance as gnosis integrity proxy
-                status = tuner.get_status()
-                current_resonance = status.get('current_resonance', 0.0)
+        # 2. Data Persistence: Log telemetry every 60 seconds
+        if current_time - last_log_time >= 60:
+            # Sync telemetry with modules
+            status = tuner.get_status()
+            telemetry["target_resonance"] = status.get("current_resonance", 712.8)
+            telemetry["entropic_fuel"] = recycler.current_fuel
 
-                db.log_telemetry(current_fuel, current_resonance)
-            except Exception as e:
-                print(f"Telemetry logging failed: {e}")
+            # Log to DB
+            db.log_telemetry(telemetry["gnosis_integrity"], telemetry["entropic_fuel"])
+            print(f"Telemetry logged: Gnosis={telemetry['gnosis_integrity']}, Fuel={telemetry['entropic_fuel']}")
+            last_log_time = current_time
 
-            time.sleep(60)
+        time.sleep(1) # Check loop frequency
 
-    telemetry_thread = threading.Thread(target=telemetry_logger_loop, daemon=True)
-    telemetry_thread.start()
+# Start background thread
+db.init_db()
+monitor_thread = threading.Thread(target=background_monitor, daemon=True)
+monitor_thread.start()
 
-# Start background tasks if running as main
-if __name__ == '__main__':
-    start_background_tasks()
-    app.run(host='127.0.0.1', port=5000, debug=True)
 
+# --- ROUTES ---
 
 @app.route('/')
 def index():
-    # Serve index.html from the repo root (static_folder='.')
     return send_from_directory('.', 'index.html')
 
-# Entropic Recycler endpoints
+# -- Dashboard API Endpoints --
+
+@app.route('/api/nodes')
+def get_nodes():
+    # Simulate dynamic changes
+    for node in nodes:
+        if node["status"] == "ONLINE":
+            change = random.randint(-5, 5)
+            node["load"] = max(0, min(100, node["load"] + change))
+        elif node["status"] == "UNSTABLE":
+            change = random.randint(-10, 10)
+            node["load"] = max(0, min(100, node["load"] + change))
+            if node["load"] > 99:
+                node["status"] = "OFFLINE"
+        elif node["status"] == "IDLE":
+             if random.random() < 0.1:
+                 node["status"] = "ONLINE"
+                 node["load"] = random.randint(10, 30)
+        elif node["status"] == "OFFLINE":
+             # Random chance to reboot
+             if random.random() < 0.2:
+                 node["status"] = "UNSTABLE"
+                 node["load"] = 80
+    return jsonify(nodes)
+
+@app.route('/api/telemetry')
+def get_telemetry():
+    # Update telemetry from real modules
+    res_status = tuner.get_status()
+    telemetry["target_resonance"] = res_status.get("current_resonance", 712.8)
+    telemetry["entropic_fuel"] = recycler.current_fuel
+
+    # Simulate other fluctuations
+    telemetry["system_integrity"] = max(0, min(100, telemetry["system_integrity"] + random.uniform(-0.1, 0.1)))
+    telemetry["gnosis_integrity"] = max(0, min(100, telemetry["gnosis_integrity"] + random.uniform(-0.1, 0.1)))
+
+    return jsonify({
+        "target_resonance": round(telemetry["target_resonance"], 2),
+        "system_integrity": round(telemetry["system_integrity"], 1),
+        "gnosis_integrity": round(telemetry["gnosis_integrity"], 1),
+        "entropic_fuel": round(telemetry["entropic_fuel"], 2)
+    })
+
+@app.route('/api/command', methods=['POST'])
+def execute_command():
+    data = request.json or {}
+    command = data.get('command', '').strip()
+
+    # Side effects handling (state changes) for Dashboard commands
+    if command.lower() == 'purge':
+        for node in nodes:
+            node["load"] = 0
+            if node["status"] == "UNSTABLE":
+                node["status"] = "ONLINE"
+    elif command.lower() == 'connect_eternal':
+        new_id = f"NODE_ZETA_{random.randint(10,99)}"
+        nodes.append({"id": new_id, "status": "ONLINE", "load": 10, "code": f"{random.randint(100,999)}-Z{random.randint(10,99)}"})
+
+    # Use the Chimera Syntax Engine (Integrated Version)
+    response_lines = chimera_syntax_engine.execute_chimera_command(
+        command,
+        context_nodes=nodes,
+        context_telemetry=telemetry
+    )
+
+    # Dashboard expects { "response": [lines] }
+    return jsonify({"response": response_lines})
+
+@app.route('/api/purge', methods=['POST'])
+def purge_system():
+    for node in nodes:
+        node["load"] = 0
+        if node["status"] == "UNSTABLE":
+            node["status"] = "ONLINE"
+    return jsonify({"status": "success", "message": "Purge complete"})
+
+@app.route('/api/connect', methods=['POST'])
+def connect_node():
+    new_id = f"NODE_OMEGA_{random.randint(10,99)}"
+    nodes.append({"id": new_id, "status": "ONLINE", "load": 5, "code": f"{random.randint(100,999)}-X{random.randint(10,99)}"})
+    return jsonify({"status": "success", "message": f"{new_id} connected"})
+
+
+# -- Modern API Endpoints (Kept for compatibility/extensions) --
+
 @app.route('/api/fuel', methods=['GET'])
 def get_fuel():
     return jsonify({
@@ -85,19 +180,24 @@ def recycle():
     result = recycler.consume_failure(error_data)
     return jsonify(result)
 
-# Frequency tuner endpoint
 @app.route('/api/resonance', methods=['GET'])
 def resonance_status():
     return jsonify(tuner.get_status())
 
-# Chimera console endpoint
 @app.route('/api/chimera', methods=['POST'])
 def chimera():
+    # Modern endpoint returning JSON structure
     payload = request.json or {}
     command = payload.get("command", "")
-    result = execute_chimera_command(command)
+    # Note: Modern callers might not provide context, or we might need to inject it if we want modern calls to see nodes.
+    # For now, we assume modern calls are for the "Divine Decree" stuff which doesn't check nodes list.
+    result = chimera_syntax_engine.execute_chimera_command(command)
+
+    # If the engine returned a list (legacy mode), wrap it.
+    if isinstance(result, list):
+        return jsonify({"ok": True, "lines": result})
+
     return jsonify(result)
 
 if __name__ == '__main__':
-    # Run Flask dev server
     app.run(host='127.0.0.1', port=5000, debug=True)

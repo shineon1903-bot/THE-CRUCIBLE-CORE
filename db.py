@@ -1,54 +1,38 @@
 import sqlite3
-import time
-from typing import Dict, Any, Optional
+import datetime
 
-DB_FILE = 'crucible.db'
+DB_NAME = "crucible.db"
 
-def get_connection():
-    return sqlite3.connect(DB_FILE)
+def get_db_connection():
+    conn = sqlite3.connect(DB_NAME)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 def init_db():
-    """Initialize the database and create the soul_signature_telemetry table."""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS soul_signature_telemetry (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp REAL NOT NULL,
-            entropic_fuel REAL NOT NULL,
-            gnosis_integrity REAL NOT NULL
-        )
-    ''')
-    conn.commit()
+    conn = get_db_connection()
+    with conn:
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS soul_signature_telemetry (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                gnosis_integrity REAL,
+                entropic_fuel REAL
+            )
+        ''')
     conn.close()
 
-def log_telemetry(entropic_fuel: float, gnosis_integrity: float):
-    """Log a new telemetry record."""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        INSERT INTO soul_signature_telemetry (timestamp, entropic_fuel, gnosis_integrity)
-        VALUES (?, ?, ?)
-    ''', (time.time(), entropic_fuel, gnosis_integrity))
-    conn.commit()
+def log_telemetry(gnosis, fuel):
+    conn = get_db_connection()
+    with conn:
+        conn.execute('''
+            INSERT INTO soul_signature_telemetry (gnosis_integrity, entropic_fuel)
+            VALUES (?, ?)
+        ''', (gnosis, fuel))
     conn.close()
 
-def get_latest_telemetry() -> Optional[Dict[str, Any]]:
-    """Retrieve the most recent telemetry record."""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        SELECT entropic_fuel, gnosis_integrity, timestamp
-        FROM soul_signature_telemetry
-        ORDER BY id DESC LIMIT 1
-    ''')
-    row = cursor.fetchone()
+def get_telemetry_history(limit=10):
+    conn = get_db_connection()
+    cursor = conn.execute('SELECT * FROM soul_signature_telemetry ORDER BY timestamp DESC LIMIT ?', (limit,))
+    rows = cursor.fetchall()
     conn.close()
-
-    if row:
-        return {
-            "entropic_fuel": row[0],
-            "gnosis_integrity": row[1],
-            "timestamp": row[2]
-        }
-    return None
+    return [dict(row) for row in rows]
