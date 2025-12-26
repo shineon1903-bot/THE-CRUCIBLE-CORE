@@ -1,16 +1,24 @@
-from flask import Flask, render_template, jsonify, request
-import random
-import datetime
-import threading
-import time
-import inverted_sigil_recycler
-import frequency_tuner
+# Minimal Flask app to expose the three scripts to the UI.
+from flask import Flask, jsonify, request, send_from_directory, render_template
+from inverted_sigil_recycler import recycler
+from frequency_tuner import FrequencyTuner
 import chimera_syntax_engine
 import db
+import threading
+import time
+import random
+import os
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='.', template_folder='templates')
 
-# Simulated Database (InMemory state for nodes)
+# Create tuner instance globally so routes can access it
+tuner = FrequencyTuner(target_hz=712.8, interval_seconds=60)
+try:
+    tuner.start()
+except Exception:
+    pass
+
+# --- SIMULATION STATE (From Dashboard Branch) ---
 nodes = [
     {"id": "NODE_ALPHA_01", "status": "ONLINE", "load": 42, "code": "8F2-X91"},
     {"id": "NODE_BETA_04", "status": "UNSTABLE", "load": 98, "code": "7B1-Z00"},
@@ -37,37 +45,42 @@ def background_monitor():
         current_time = time.time()
 
         # 1. Logic Synchronization: Monitor Node_Beta_04
-        # "Map the 'Node_Beta_04' status... trigger consume_failure... whenever a system timeout or error occurs."
-        # We assume 'OFFLINE' or 'UNSTABLE' with high load might count as error/timeout context.
-        # Let's be specific: If Node_Beta_04 is OFFLINE, we trigger failure consumption.
-
         beta_node = next((n for n in nodes if n["id"] == "NODE_BETA_04"), None)
         if beta_node:
             if beta_node["status"] == "OFFLINE":
-                inverted_sigil_recycler.consume_failure("Node_Beta_04 OFFLINE")
-                # Reset status to UNSTABLE after consuming failure to avoid infinite loop of consumption in this simulation
-                # or we just let it consume repeatedly. Let's consume then reset to give it a chance to "recover" or just wait.
-                # For simulation, we'll leave it, but maybe limit frequency?
-                # Actually, `consume_failure` is just a logic trigger.
-                pass
+                # Use the module to consume failure
+                recycler.consume_failure("Node_Beta_04 OFFLINE")
             elif beta_node["status"] == "UNSTABLE" and beta_node["load"] > 99:
-                 inverted_sigil_recycler.consume_failure("Node_Beta_04 CRITICAL LOAD")
+                 recycler.consume_failure("Node_Beta_04 CRITICAL LOAD")
 
         # 2. Data Persistence: Log telemetry every 60 seconds
         if current_time - last_log_time >= 60:
-            # Get latest values
-            gnosis = telemetry.get("gnosis_integrity", 0)
-            fuel = inverted_sigil_recycler.get_entropic_fuel_level() # Get latest from module
+            # Sync telemetry with modules
+            status = tuner.get_status()
+            telemetry["target_resonance"] = status.get("current_resonance", 712.8)
+            telemetry["entropic_fuel"] = recycler.current_fuel
 
-            db.log_telemetry(gnosis, fuel)
-            print(f"Telemetry logged: Gnosis={gnosis}, Fuel={fuel}")
+            # Log to DB
+            db.log_telemetry(telemetry["gnosis_integrity"], telemetry["entropic_fuel"])
+            print(f"Telemetry logged: Gnosis={telemetry['gnosis_integrity']}, Fuel={telemetry['entropic_fuel']}")
             last_log_time = current_time
 
         time.sleep(1) # Check loop frequency
 
+# Initialize DB
+db.init_db()
+# Start background thread
+monitor_thread = threading.Thread(target=background_monitor, daemon=True)
+monitor_thread.start()
+
+
+# --- ROUTES ---
+
 @app.route('/')
 def index():
     return render_template('index.html')
+
+# -- Dashboard API Endpoints --
 
 @app.route('/api/nodes')
 def get_nodes():
@@ -90,16 +103,16 @@ def get_nodes():
              if random.random() < 0.2:
                  node["status"] = "UNSTABLE"
                  node["load"] = 80
-
     return jsonify(nodes)
 
 @app.route('/api/telemetry')
 def get_telemetry():
-    # Use external modules for specific values
-    telemetry["target_resonance"] = frequency_tuner.get_target_resonance()
-    telemetry["entropic_fuel"] = inverted_sigil_recycler.get_entropic_fuel_level()
+    # Update telemetry from real modules
+    res_status = tuner.get_status()
+    telemetry["target_resonance"] = res_status.get("current_resonance", 712.8)
+    telemetry["entropic_fuel"] = recycler.current_fuel
 
-    # Simulate other fluctuations internally for now
+    # Simulate other fluctuations
     telemetry["system_integrity"] = max(0, min(100, telemetry["system_integrity"] + random.uniform(-0.1, 0.1)))
     telemetry["gnosis_integrity"] = max(0, min(100, telemetry["gnosis_integrity"] + random.uniform(-0.1, 0.1)))
 
@@ -112,32 +125,31 @@ def get_telemetry():
 
 @app.route('/api/command', methods=['POST'])
 def execute_command():
-    data = request.json
+    data = request.json or {}
     command = data.get('command', '').strip()
 
-    # Side effects handling (state changes)
-    if command == 'purge':
-        # Apply purge logic
+    # Side effects handling (state changes) for Dashboard commands
+    if command.lower() == 'purge':
         for node in nodes:
             node["load"] = 0
             if node["status"] == "UNSTABLE":
                 node["status"] = "ONLINE"
-    elif command == 'connect_eternal':
+    elif command.lower() == 'connect_eternal':
         new_id = f"NODE_ZETA_{random.randint(10,99)}"
         nodes.append({"id": new_id, "status": "ONLINE", "load": 10, "code": f"{random.randint(100,999)}-Z{random.randint(10,99)}"})
 
-    # Use the Chimera Syntax Engine for the response text
+    # Use the Chimera Syntax Engine (Integrated Version)
     response_lines = chimera_syntax_engine.execute_chimera_command(
         command,
         context_nodes=nodes,
         context_telemetry=telemetry
     )
 
+    # Dashboard expects { "response": [lines] }
     return jsonify({"response": response_lines})
 
 @app.route('/api/purge', methods=['POST'])
 def purge_system():
-     # Same logic as command 'purge'
     for node in nodes:
         node["load"] = 0
         if node["status"] == "UNSTABLE":
@@ -150,12 +162,41 @@ def connect_node():
     nodes.append({"id": new_id, "status": "ONLINE", "load": 5, "code": f"{random.randint(100,999)}-X{random.randint(10,99)}"})
     return jsonify({"status": "success", "message": f"{new_id} connected"})
 
-# Initialize DB
-db.init_db()
 
-# Start background thread
-monitor_thread = threading.Thread(target=background_monitor, daemon=True)
-monitor_thread.start()
+# -- Modern API Endpoints (Kept for compatibility/extensions) --
+
+@app.route('/api/fuel', methods=['GET'])
+def get_fuel():
+    return jsonify({
+        "status": recycler.status,
+        "fuel_level": recycler.current_fuel
+    })
+
+@app.route('/api/recycle', methods=['POST'])
+def recycle():
+    payload = request.json or {}
+    error_data = payload.get("error_data", "API_Shadow_Input")
+    result = recycler.consume_failure(error_data)
+    return jsonify(result)
+
+@app.route('/api/resonance', methods=['GET'])
+def resonance_status():
+    return jsonify(tuner.get_status())
+
+@app.route('/api/chimera', methods=['POST'])
+def chimera():
+    # Modern endpoint returning JSON structure
+    payload = request.json or {}
+    command = payload.get("command", "")
+    # Note: Modern callers might not provide context, or we might need to inject it if we want modern calls to see nodes.
+    # For now, we assume modern calls are for the "Divine Decree" stuff which doesn't check nodes list.
+    result = chimera_syntax_engine.execute_chimera_command(command)
+
+    # If the engine returned a list (legacy mode), wrap it.
+    if isinstance(result, list):
+        return jsonify({"ok": True, "lines": result})
+
+    return jsonify(result)
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(host='127.0.0.1', port=5000, debug=True)

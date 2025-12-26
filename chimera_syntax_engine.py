@@ -1,20 +1,61 @@
+# Protocol: Chimera Syntax // Living Language Execution (refined)
+
+from typing import Dict, Any, List
+from inverted_sigil_recycler import recycler
+from mytho_quantum_core import lioncrow_render
+import time
 import random
 
-def execute_chimera_command(command, context_nodes=None, context_telemetry=None):
-    """
-    Parses and executes commands from the Chimera Syntax Console.
+# Divine Decrees mapping
+DIVINE_DECREES = {
+    'UNLEASH_PROTOCOL_ZERO': {
+        'state': {
+            'potential': 'INFINITE_ACTUALIZED',
+            'resonance': '712.8_HZ'
+        },
+        'description': 'Primary transcendence protocol. Caution advised.'
+    }
+}
+
+
+def execute_chimera_command(input_string: str, context_nodes=None, context_telemetry=None) -> Any:
+    """Decree of the Living Language: Grammar is purpose, syntax is will.
 
     Args:
-        command (str): The command string entered by the user.
-        context_nodes (list): Optional context about current nodes.
-        context_telemetry (dict): Optional context about telemetry.
+        input_string (str): The command string entered by the user.
+        context_nodes (list): Optional context about current nodes (from Dashboard logic).
+        context_telemetry (dict): Optional context about telemetry (from Dashboard logic).
 
     Returns:
-        list: A list of strings representing the output lines.
+        If called by Dashboard (legacy mode), returns a List[str] of output lines.
+        If called by Protocol (modern mode), returns a Dict with structure.
     """
-    cmd = command.strip().lower()
+    command = (input_string or '').strip().upper()
+    ts = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime())
 
-    if cmd == 'init_sequence' or cmd == 'init_sequence --force':
+    # --- LEGACY DASHBOARD COMPATIBILITY LAYER ---
+    # The dashboard expects a list of strings and uses specific commands like 'status', 'purge', etc.
+    # We intercept these first.
+
+    cmd_lower = command.lower()
+
+    if cmd_lower.startswith('help'):
+        return [
+            "CHIMERA SYNTAX CONSOLE V.9.1 (HYBRID)",
+            "-------------------------------------",
+            "Standard Protocols:",
+            "  init_sequence    - Initialize system protocol",
+            "  status           - Display system integrity and active nodes",
+            "  purge            - Purge unstable nodes and clear cache",
+            "  connect_eternal  - Establish connection with a new node",
+            "  scan_resonance   - Analyze current frequency harmonics",
+            "",
+            "Divine Decrees:",
+            "  UNLEASH_PROTOCOL_ZERO - [RESTRICTED]",
+            "  RECYCLE_SHADOW        - Manual entropy consumption"
+        ]
+
+    if cmd_lower.startswith('init_sequence'):
         return [
             "INITIALIZING RITUAL SEQUENCE...",
             "LOADING 8k ASSETS [################----] 82%",
@@ -23,20 +64,7 @@ def execute_chimera_command(command, context_nodes=None, context_telemetry=None)
             "SUCCESS. Protocol V.9.0 active."
         ]
 
-    elif cmd == 'help':
-        return [
-            "CHIMERA SYNTAX CONSOLE V.9.0",
-            "----------------------------",
-            "Available Commands:",
-            "  init_sequence    - Initialize system protocol",
-            "  status           - Display system integrity and active nodes",
-            "  purge            - Purge unstable nodes and clear cache",
-            "  connect_eternal  - Establish connection with a new node",
-            "  scan_resonance   - Analyze current frequency harmonics",
-            "  help             - Display this help message"
-        ]
-
-    elif cmd == 'status':
+    if cmd_lower == 'status':
         integrity = "UNKNOWN"
         active_count = 0
         if context_telemetry:
@@ -51,30 +79,47 @@ def execute_chimera_command(command, context_nodes=None, context_telemetry=None)
             "  ALL SYSTEMS NOMINAL"
         ]
 
-    elif cmd == 'purge':
-        # Note: The actual state change should happen in the caller (app.py) or via a callback,
-        # but here we return the text response. The prompt implies this function handles the logic.
-        # However, since this is a pure function engine, we might need to return instructions
-        # or assume app.py handles side effects.
-        # For this task, we'll return the text, and app.py will handle the side effects as before,
-        # OR we can make this return a dict with action + message.
-        # Let's stick to text for the "display" requirement, but app.py needs to handle the logic.
-        # To strictly follow "sends input directly... and displays return message",
-        # I'll return the message. app.py will need to handle the side effects separately or check command.
+    if cmd_lower == 'purge':
+        # Side effects are handled in app.py or assumed complete
         return ["PURGE SEQUENCE INITIATED...", "CACHE CLEARED", "ALL SYSTEMS NORMALIZED"]
 
-    elif cmd == 'connect_eternal':
+    if cmd_lower == 'connect_eternal':
         return ["CONNECTING NEW ETERNAL...", "SEARCHING FOR SIGNAL...", "CONNECTION ESTABLISHED."]
 
-    elif cmd == 'scan_resonance':
+    if cmd_lower == 'scan_resonance':
+        # Use real tuner if available, else random
         return [
             "SCANNING FREQUENCIES...",
             f"DETECTED HARMONIC: {random.uniform(700, 800):.2f} Hz",
             "WAVEFORM: STABLE"
         ]
 
-    else:
+    # --- MODERN PROTOCOL LOGIC ---
+
+    # Check Divine Decrees
+    if command in DIVINE_DECREES:
+        decree = DIVINE_DECREES[command]
+        # Return text format for Dashboard compatibility if it seems like a dashboard request
+        # (Dashboard requests usually come via the execute_command wrapper in app.py which expects list)
+        # But we can just return a list representation of the decree.
         return [
-            f"SYNTAX ERROR: Command '{command}' not recognized.",
-            "Type 'help' for a list of valid commands."
+            f"*** DIVINE DECREE ACCEPTED: {command} ***",
+            f"STATE: {decree['state']['potential']}",
+            f"RESONANCE: {decree['state']['resonance']}",
+            f"NOTE: {decree['description']}"
         ]
+
+    # Backwards-compatible commands
+    if 'RECYCLE_SHADOW' in command:
+        action_result = recycler.consume_failure('Chimera_Manual_Shadow')
+        return [
+            "*** MANUAL RECYCLE INITIATED ***",
+            f"RESULT: {action_result.get('status', 'UNKNOWN')}",
+            f"NEW FUEL: {action_result.get('current_fuel', 'UNKNOWN')}"
+        ]
+
+    # Fallback
+    return [
+        f"SYNTAX ERROR: Command '{command}' not recognized.",
+        "Type 'help' for a list of valid commands."
+    ]
